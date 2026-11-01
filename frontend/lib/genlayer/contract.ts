@@ -1,0 +1,91 @@
+/**
+ * What the contract returns and what this console may send it.
+ * Method names and argument order are written down once, here.
+ */
+import { CONTRACT_ADDRESS } from "@/lib/config";
+import { readClient } from "./client";
+import type { FeeKind } from "./fees";
+
+/** genlayer-js hands back Maps and bigints; the UI wants plain objects. */
+export function plain(value: unknown): unknown {
+  if (value instanceof Map) return Object.fromEntries([...value].map(([k, v]) => [String(k), plain(v)]));
+  if (Array.isArray(value)) return value.map(plain);
+  if (typeof value === "bigint") return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : value.toString();
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as object).map(([k, v]) => [k, plain(v)]));
+  }
+  return value;
+}
+
+export type Requirement = { id: string; text: string; rule: string; mandatory: boolean };
+export type Definition = {
+  requirements: Requirement[];
+  evidence_policy: { min_sources: number; min_publishers: number };
+  payout: { payee: string; partial_bps: number };
+};
+export type EvidenceRow = {
+  evidence_id: string; url: string; publisher: string; supports: string[]; submitter: string; registered_at: number;
+};
+export type Protocol = {
+  id: string; title: string; subject: string; creator: string; responsible: string; deadline: number;
+  definition: Definition; payee: string; fingerprint: string; state: string; reward: string;
+  created_at: number; frozen_at: number; evidence_ids: string[]; verification_count: number;
+  result: string; result_reason: string; proposed_at: number; finalized_at: number;
+  paid_to_payee: string; refunded_to_creator: string; evidence: EvidenceRow[];
+  accept_delay: number; recovery_window: number;
+};
+export type ProtocolSummary = Omit<Protocol, "definition" | "evidence" | "accept_delay" | "recovery_window">;
+export type Answer = { requirement_id: string; status: string; quote: string; quote_evidence_id: string; note?: string };
+export type Verification = {
+  round: number; evidence_count: number; answers: Answer[];
+  sources: { evidence_id: string; availability: string }[]; result: string; reason: string; proposed_at: number;
+};
+export type Page<T> = { total: number; items: T[] };
+export type PartyRecord = {
+  party: string; total: number; counts: Record<string, number>; verified_bps: number;
+  entries: { protocol_id: string; title: string; result: string; finalized_at: number; fingerprint: string }[];
+};
+export type Info = {
+  version: string; protocol_count: number; registry_count: number; custody: string;
+  accept_delay: number; recovery_window: number; max_requirements: number; max_evidence: number;
+};
+
+async function read<T>(functionName: string, args: (string | number)[] = []): Promise<T> {
+  const raw = await readClient().readContract({ address: CONTRACT_ADDRESS, functionName, args });
+  return plain(raw) as T;
+}
+
+export const reads = {
+  info: () => read<Info>("get_info"),
+  protocol: (id: string) => read<Protocol>("get_protocol", [id]),
+  protocols: (offset = 0, limit = 20) => read<Page<ProtocolSummary>>("list_protocols", [offset, limit]),
+  verification: (id: string, round: number) => read<Verification>("get_verification", [id, round]),
+  registry: (result = "", offset = 0, limit = 20) => read<Page<ProtocolSummary>>("list_registry", [result, offset, limit]),
+  party: (address: string) => read<PartyRecord>("get_party_record", [address]),
+  activity: (offset = 0, limit = 12) =>
+    read<Page<{ protocol_id: string; state: string; note: string; at: number }>>("list_activity", [offset, limit]),
+};
+
+export type Call = {
+  functionName: string;
+  args: (string | number | bigint)[];
+  value: bigint;
+  kind: FeeKind;
+  label: string;
+};
+const call = (label: string, functionName: string, args: Call["args"] = [], value = 0n, kind: FeeKind = "light"): Call =>
+  ({ label, functionName, args, value, kind });
+
+export const calls = {
+  create: (title: string, subject: string, responsible: string, deadline: number, definition: Definition) =>
+    call("Create protocol", "create_protocol", [title, subject, responsible, deadline, JSON.stringify(definition)]),
+  fund: (id: string, wei: bigint) => call("Fund protocol", "fund_protocol", [id], wei),
+  freeze: (id: string) => call("Freeze protocol", "freeze_protocol", [id]),
+  accept: (id: string) => call("Accept protocol", "accept_protocol", [id]),
+  cancel: (id: string) => call("Cancel protocol", "cancel_protocol", [id]),
+  evidence: (id: string, url: string, supports: string) => call("Register evidence", "submit_evidence", [id, url, supports]),
+  verify: (id: string) => call("Verify evidence", "request_verification", [id], 0n, "verify"),
+  acceptVerdict: (id: string) => call("Accept verdict", "accept_verification", [id]),
+  finalize: (id: string) => call("Finalize and pay", "finalize_protocol", [id]),
+  recover: (id: string) => call("Recover protocol", "recover_protocol", [id]),
+};

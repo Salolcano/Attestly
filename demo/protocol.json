@@ -1,0 +1,11 @@
+{
+  "title": "Widget 2.0 release compliance",
+  "subject": "widgetworks/widget v2.0",
+  "requirements": [
+    { "text": "The release states an open-source licence", "rule": "Look for a named licence", "mandatory": true },
+    { "text": "A changelog entry exists for version 2.0", "rule": "", "mandatory": true },
+    { "text": "A security contact is published", "rule": "", "mandatory": false }
+  ],
+  "evidence_policy": { "min_sources": 1, "min_publishers": 1 },
+  "payout": { "payee": "0xYOUR_PAYEE_ADDRESS", "partial_bps": 4000 }
+}
