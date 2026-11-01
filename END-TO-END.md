@@ -7,6 +7,7 @@ A record of one protocol walked through the deployed Attestly contract on GenLay
 | Item | Value |
 |---|---|
 | Network | GenLayer Studio Next, chain 61997 |
+| Contract | [0x9126134c9924Ebd238F649E679C0FF73eE3936b2](https://explorer-studio-next.genlayer.com/address/0x9126134c9924Ebd238F649E679C0FF73eE3936b2) |
 | Deploy transaction | [0xa1d25a6ab9cf8a8a7439a599c470c40c9c4b6ba15dcf5c52cfedacd3fd9e0952](https://explorer-studio-next.genlayer.com/tx/0xa1d25a6ab9cf8a8a7439a599c470c40c9c4b6ba15dcf5c52cfedacd3fd9e0952) |
 
 ## Evidence page
