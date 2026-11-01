@@ -298,3 +298,25 @@ def test_views_paginate_newest_first(h):
     assert page["total"] == 3 and [p["id"] for p in page["items"]] == ["P3", "P2"]
     assert "definition" not in page["items"][0]
     assert h.contract.get_party_record(STRANGER)["total"] == 0
+
+
+@pytest.mark.parametrize("source", ["message", "raw", "string"])
+def test_the_clock_is_read_from_whichever_place_the_runner_provides(h, source):
+    # Regression: Studio Next failed every write with "the transaction carries no time"
+    # because the clock was only looked up in gl.message_raw.
+    type(h).time_source = source
+    try:
+        h.at(0)
+        assert h.module._now() == int(T0.timestamp())
+        h.at(90)
+        assert h.module._now() == int(T0.timestamp()) + 90
+        pid = h.create()
+        assert pid == "P1"
+    finally:
+        type(h).time_source = "message"
+
+
+def test_no_clock_at_all_is_a_clear_refusal(h):
+    h.gl.message.datetime = None
+    h.gl.message_raw = {}
+    assert "no time" in h.expect_fail(h.module._now)

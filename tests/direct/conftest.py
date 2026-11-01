@@ -58,8 +58,19 @@ class Harness:
         self.gl.message.sender_address = stub_module.Address(address)
         self.gl.message.value = value
 
+    time_source = "message"   # "message" (v0.3 SDK), "raw" (older runners) or "string"
+
     def at(self, seconds):
-        self.gl.message_raw["datetime"] = (T0 + datetime.timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        moment = T0 + datetime.timedelta(seconds=seconds)
+        self.gl.message_raw = {"datetime": moment.strftime("%Y-%m-%dT%H:%M:%SZ")}
+        if self.time_source == "raw":
+            self.gl.message.datetime = None
+        elif self.time_source == "string":
+            self.gl.message_raw = {}
+            self.gl.message.datetime = moment.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        else:
+            self.gl.message.datetime = moment
+            self.gl.message_raw = {}   # the real v0.3 runner had no usable raw time: prove we do not need it
 
     def expect_fail(self, fn, *args, **kwargs):
         with pytest.raises(self.module.gl.vm.UserError) as info:

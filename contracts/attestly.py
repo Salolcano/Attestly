@@ -97,16 +97,36 @@ def _sha256_hex(data: bytes) -> str:
 
 
 def _now() -> int:
-    """The transaction's own time, so every node agrees about the clock."""
-    raw = gl.message_raw.get("datetime") if hasattr(gl, "message_raw") else None
-    if not raw:
-        _fail("the transaction carries no time")
-    text = str(raw).strip().replace("Z", "+00:00")
-    try:
-        import datetime
-        return int(datetime.datetime.fromisoformat(text).timestamp())
-    except Exception:
-        _fail("the transaction's time could not be read")
+    """The transaction's own time, so every node agrees about the clock.
+
+    Studio Next's v0.3 SDK exposes it as `gl.message.datetime`; older runners put an
+    ISO string at `gl.message_raw["datetime"]`. Both are tried, in that order, and a
+    naive time is read as UTC."""
+    import datetime
+    candidates = []
+    message = getattr(gl, "message", None)
+    if message is not None:
+        candidates.append(getattr(message, "datetime", None))
+    raw = getattr(gl, "message_raw", None)
+    if raw is not None:
+        try:
+            candidates.append(raw.get("datetime"))
+        except Exception:
+            pass
+    for value in candidates:
+        if value is None or value == "":
+            continue
+        try:
+            if isinstance(value, datetime.datetime):
+                moment = value
+            else:
+                moment = datetime.datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=datetime.timezone.utc)
+            return int(moment.timestamp())
+        except Exception:
+            continue
+    _fail("the transaction carries no time")
 
 
 def _text(value, field: str, limit: int, required: bool = True) -> str:

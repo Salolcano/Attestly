@@ -84,8 +84,8 @@ def install():
         return Bound
 
     gl.evm = types.SimpleNamespace(contract_interface=contract_interface)
-    gl.message = types.SimpleNamespace(sender_address=Address("0x" + "1" * 40), value=0)
-    gl.message_raw = {"datetime": "2026-11-01T00:00:00Z"}
+    gl.message = types.SimpleNamespace(sender_address=Address("0x" + "1" * 40), value=0, datetime=None)
+    gl.message_raw = {}
 
     class _Response:
         def __init__(self, status, body):
