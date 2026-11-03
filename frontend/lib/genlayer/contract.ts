@@ -29,7 +29,7 @@ export type EvidenceRow = {
 export type Protocol = {
   id: string; title: string; subject: string; creator: string; responsible: string; deadline: number;
   definition: Definition; payee: string; fingerprint: string; state: string; reward: string;
-  created_at: number; frozen_at: number; evidence_ids: string[]; verification_count: number;
+  created_at: number; frozen_at: number; evidence_ids: string[]; evidence_seq: number; submitters: string[]; verification_count: number;
   result: string; result_reason: string; proposed_at: number; finalized_at: number;
   paid_to_payee: string; refunded_to_creator: string; evidence: EvidenceRow[];
   accept_delay: number; recovery_window: number;
@@ -48,6 +48,7 @@ export type PartyRecord = {
 export type Info = {
   version: string; protocol_count: number; registry_count: number; custody: string;
   accept_delay: number; recovery_window: number; max_requirements: number; max_evidence: number;
+  max_per_delegate: number; reserved_for_owners: number; max_delegates: number;
 };
 
 async function read<T>(functionName: string, args: (string | number)[] = []): Promise<T> {
@@ -84,6 +85,11 @@ export const calls = {
   accept: (id: string) => call("Accept protocol", "accept_protocol", [id]),
   cancel: (id: string) => call("Cancel protocol", "cancel_protocol", [id]),
   evidence: (id: string, url: string, supports: string) => call("Register evidence", "submit_evidence", [id, url, supports]),
+  authorize: (id: string, who: string) => call("Authorize submitter", "authorize_submitter", [id, who]),
+  revoke: (id: string, who: string) => call("Revoke submitter", "revoke_submitter", [id, who]),
+  withdraw: (id: string, evidenceId: string) => call("Withdraw evidence", "withdraw_evidence", [id, evidenceId]),
+  replace: (id: string, evidenceId: string, url: string, supports: string) =>
+    call("Replace evidence", "replace_evidence", [id, evidenceId, url, supports]),
   verify: (id: string) => call("Verify evidence", "request_verification", [id], 0n, "verify"),
   acceptVerdict: (id: string) => call("Accept verdict", "accept_verification", [id]),
   finalize: (id: string) => call("Finalize and pay", "finalize_protocol", [id]),

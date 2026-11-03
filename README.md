@@ -21,6 +21,22 @@ with `CANCELLED` and a one-day-after-deadline `recover_protocol` so no GEN is ev
 
 Results: `VERIFIED`, `PARTIALLY_VERIFIED`, `NOT_VERIFIED`, `INCONCLUSIVE`, `PROTOCOL_DEVIATION`.
 
+## Who may write evidence (steward request)
+
+The evidence set is permissioned, so unrelated accounts can never fill its twelve slots:
+
+* Only the **creator**, the **responsible party** and **submitters either of them authorizes**
+  (`authorize_submitter` / `revoke_submitter`, up to 5) can call `submit_evidence`.
+* An authorized submitter holds at most **4** sources, and **4 of the 12 slots are reserved** for the
+  two owners: delegates can take at most 8 between them.
+* Either owner can `withdraw_evidence` or `replace_evidence` any row (a submitter can do so for their
+  own); a withdrawn or replaced row stops counting and frees its slot. Lifetime registrations are capped
+  at 36 so curation cannot churn forever.
+* `request_verification` is limited to the same people, and an `INCONCLUSIVE` or `PROTOCOL_DEVIATION`
+  verdict can be accepted early only by an owner (by anyone after the deadline), so nobody can close
+  the door on the owners' evidence.
+* Proof: `tests/direct/test_evidence_protection.py` walks the workflow through the twelve-source limit.
+
 ## Fee system (Consensus v0.6)
 
 Every write carries a `FeesDistribution` + `feeValue` taken unchanged from the SDK's own estimate
@@ -36,7 +52,7 @@ Every write carries a `FeesDistribution` + `feeValue` taken unchanged from the S
 ## Tests
 
 ```
-python -m pytest -q            # 28 contract-logic tests (in-process stub of the SDK)
+python -m pytest -q            # 41 contract-logic tests (in-process stub of the SDK)
 cd frontend && npm test        # fee and formatting tests
 genvm-lint check contracts/attestly.py
 ```

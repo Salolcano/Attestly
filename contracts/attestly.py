@@ -62,6 +62,11 @@ MAX_TEXT = 400
 MAX_BODY = 60000
 MAX_EXCERPT = 6000
 MAX_REGISTRY_ENTRIES = 50
+# who may fill the evidence set, and how much of it any one account can take
+MAX_PER_DELEGATE = 4          # sources one authorized submitter may hold at a time
+RESERVED_FOR_OWNERS = 4       # slots only the creator / responsible party can use
+MAX_DELEGATES = 5             # authorized submitters per protocol
+MAX_REGISTRATIONS = 36        # lifetime registrations (withdraw/replace cannot churn forever)
 ACCEPT_DELAY = 300
 RECOVERY_WINDOW = 86400
 ERROR_EXPECTED = "[EXPECTED]"
@@ -562,7 +567,7 @@ class Attestly(gl.contract.Contract):
         p = {"id": pid, "title": title, "subject": subject, "creator": creator, "responsible": resp,
              "deadline": deadline, "definition": definition, "payee": definition["payout"]["payee"],
              "fingerprint": "", "state": S_DRAFT, "reward": "0", "created_at": now,
-             "frozen_at": 0, "evidence_ids": [], "verification_count": 0, "result": "",
+             "frozen_at": 0, "evidence_ids": [], "evidence_seq": 0, "submitters": [], "verification_count": 0, "result": "",
              "result_reason": "", "proposed_at": 0, "finalized_at": 0,
              "paid_to_payee": "0", "refunded_to_creator": "0"}
         self._save(p)
@@ -639,29 +644,103 @@ class Attestly(gl.contract.Contract):
         return p["state"]
 
     # -- evidence -------------------------------------------------------------
+    # The evidence set is NOT open to the public. Only the creator, the responsible
+    # party and submitters they authorize can write to it, an authorized submitter is
+    # capped, and RESERVED_FOR_OWNERS slots can never be taken by a delegate. Either
+    # owner can withdraw or replace any row, so a bad row never fills a slot for good.
 
-    @gl.public.write
-    def submit_evidence(self, protocol_id: str, url: str, supports: str) -> str:
-        p = self._load(protocol_id)
+    def _is_owner(self, p: dict, who: str) -> bool:
+        return who == p["creator"] or who == p["responsible"]
+
+    def _may_submit(self, p: dict, who: str) -> bool:
+        return self._is_owner(p, who) or who in p["submitters"]
+
+    def _evidence_window(self, p: dict, now: int) -> None:
         reopen = p["state"] == S_PROPOSED and p["result"] in (R_INCONCLUSIVE, R_DEVIATION)
         if p["state"] not in (S_ACTIVE, S_EVIDENCE) and not reopen:
-            _fail("this protocol is not accepting evidence")
-        now = _now()
+            _fail("this protocol is not accepting evidence changes")
         if now > p["deadline"]:
             _fail("the deadline for evidence has passed")
-        if len(p["evidence_ids"]) >= MAX_EVIDENCE:
-            _fail(f"a protocol can hold at most {MAX_EVIDENCE} sources")
-        clean = _normalize_url(url)
+
+    def _check_quota(self, p: dict, who: str, rows: list) -> None:
+        if self._is_owner(p, who):
+            return
+        mine = sum(1 for r in rows if r["submitter"] == who)
+        if mine >= MAX_PER_DELEGATE:
+            _fail(f"an authorized submitter can hold at most {MAX_PER_DELEGATE} sources")
+        delegated = sum(1 for r in rows if not self._is_owner(p, r["submitter"]))
+        if delegated >= MAX_EVIDENCE - RESERVED_FOR_OWNERS:
+            _fail(f"the last {RESERVED_FOR_OWNERS} slots are reserved for the creator and the responsible party")
+
+    def _supports(self, p: dict, supports: str) -> list:
         ids = {r["id"] for r in p["definition"]["requirements"]}
         wanted = sorted({s.strip().upper() for s in str(supports).split(",") if s.strip()})
         if not wanted or any(not REQ_OK.match(s) or s not in ids for s in wanted):
             _fail("supports must list requirement ids of this protocol, like R1,R2")
-        for row in self._rows(p):
-            if row["url"] == clean:
-                _fail("that source is already registered")
-        eid = f"E{len(p['evidence_ids']) + 1}"
+        return wanted
+
+    def _new_evidence_id(self, p: dict) -> str:
+        if p["evidence_seq"] >= MAX_REGISTRATIONS:
+            _fail(f"this protocol has used all {MAX_REGISTRATIONS} of its source registrations")
+        p["evidence_seq"] += 1
+        return f"E{p['evidence_seq']}"
+
+    def _active_row(self, p: dict, evidence_id: str) -> dict:
+        if evidence_id not in p["evidence_ids"]:
+            _fail("that source is not part of this protocol's evidence")
+        return json.loads(self.evidence[f"{p['id']}|{evidence_id}"])
+
+    @gl.public.write
+    def authorize_submitter(self, protocol_id: str, submitter: str) -> str:
+        p = self._load(protocol_id)
+        if not self._is_owner(p, self._sender()):
+            _fail("only the creator or the responsible party can authorize a submitter")
+        if p["state"] in (S_ACCEPTED, S_FINAL, S_CANCELLED):
+            _fail("this protocol is closed to changes")
+        addr = _address(submitter, "submitter")
+        if self._is_owner(p, addr):
+            _fail("that account is already an owner of this protocol")
+        if addr in p["submitters"]:
+            _fail("that account is already authorized")
+        if len(p["submitters"]) >= MAX_DELEGATES:
+            _fail(f"a protocol can authorize at most {MAX_DELEGATES} submitters")
+        p["submitters"] = p["submitters"] + [addr]
+        self._save(p)
+        self._log(p, "submitter authorized")
+        return addr
+
+    @gl.public.write
+    def revoke_submitter(self, protocol_id: str, submitter: str) -> str:
+        p = self._load(protocol_id)
+        if not self._is_owner(p, self._sender()):
+            _fail("only the creator or the responsible party can revoke a submitter")
+        addr = _address(submitter, "submitter")
+        if addr not in p["submitters"]:
+            _fail("that account is not an authorized submitter")
+        p["submitters"] = [a for a in p["submitters"] if a != addr]
+        self._save(p)
+        self._log(p, "submitter revoked")
+        return addr
+
+    @gl.public.write
+    def submit_evidence(self, protocol_id: str, url: str, supports: str) -> str:
+        p = self._load(protocol_id)
+        who = self._sender()
+        if not self._may_submit(p, who):
+            _fail("only the creator, the responsible party or an authorized submitter can register evidence")
+        now = _now()
+        self._evidence_window(p, now)
+        rows = self._rows(p)
+        if len(rows) >= MAX_EVIDENCE:
+            _fail(f"a protocol can hold at most {MAX_EVIDENCE} sources; withdraw one before adding another")
+        self._check_quota(p, who, rows)
+        clean = _normalize_url(url)
+        wanted = self._supports(p, supports)
+        if any(r["url"] == clean for r in rows):
+            _fail("that source is already registered")
+        eid = self._new_evidence_id(p)
         row = {"evidence_id": eid, "url": clean, "publisher": _publisher(clean), "supports": wanted,
-               "submitter": self._sender(), "registered_at": now}
+               "submitter": who, "registered_at": now}
         self.evidence[f"{p['id']}|{eid}"] = _canon(row)
         p["evidence_ids"] = p["evidence_ids"] + [eid]
         p["state"] = S_EVIDENCE
@@ -669,11 +748,58 @@ class Attestly(gl.contract.Contract):
         self._log(p, f"evidence {eid} registered")
         return eid
 
+    @gl.public.write
+    def withdraw_evidence(self, protocol_id: str, evidence_id: str) -> str:
+        p = self._load(protocol_id)
+        who = self._sender()
+        now = _now()
+        self._evidence_window(p, now)
+        row = self._active_row(p, evidence_id)
+        if not (self._is_owner(p, who) or row["submitter"] == who):
+            _fail("only the creator, the responsible party or whoever registered a source can withdraw it")
+        row["removed_by"], row["removed_at"] = who, now
+        self.evidence[f"{p['id']}|{evidence_id}"] = _canon(row)
+        p["evidence_ids"] = [e for e in p["evidence_ids"] if e != evidence_id]
+        p["state"] = S_EVIDENCE if p["evidence_ids"] else S_ACTIVE
+        self._save(p)
+        self._log(p, f"evidence {evidence_id} withdrawn")
+        return p["state"]
+
+    @gl.public.write
+    def replace_evidence(self, protocol_id: str, evidence_id: str, url: str, supports: str) -> str:
+        p = self._load(protocol_id)
+        who = self._sender()
+        now = _now()
+        self._evidence_window(p, now)
+        old = self._active_row(p, evidence_id)
+        owner = self._is_owner(p, who)
+        if not (owner or old["submitter"] == who):
+            _fail("only the creator, the responsible party or whoever registered a source can replace it")
+        if not self._may_submit(p, who):
+            _fail("this account is no longer authorized to register evidence")
+        clean = _normalize_url(url)
+        wanted = self._supports(p, supports)
+        if any(r["url"] == clean for r in self._rows(p) if r["evidence_id"] != evidence_id):
+            _fail("that source is already registered")
+        eid = self._new_evidence_id(p)
+        row = {"evidence_id": eid, "url": clean, "publisher": _publisher(clean), "supports": wanted,
+               "submitter": who, "registered_at": now, "replaces": evidence_id}
+        old["removed_by"], old["removed_at"], old["replaced_by"] = who, now, eid
+        self.evidence[f"{p['id']}|{evidence_id}"] = _canon(old)
+        self.evidence[f"{p['id']}|{eid}"] = _canon(row)
+        p["evidence_ids"] = [eid if e == evidence_id else e for e in p["evidence_ids"]]
+        p["state"] = S_EVIDENCE
+        self._save(p)
+        self._log(p, f"evidence {evidence_id} replaced by {eid}")
+        return eid
+
     # -- verification ---------------------------------------------------------
 
     @gl.public.write
     def request_verification(self, protocol_id: str) -> str:
         p = self._load(protocol_id)
+        if not self._may_submit(p, self._sender()):
+            _fail("only the creator, the responsible party or an authorized submitter can request a verification")
         if p["state"] != S_EVIDENCE:
             _fail("register evidence before asking for a verification")
         definition = p["definition"]
@@ -719,8 +845,13 @@ class Attestly(gl.contract.Contract):
         p = self._load(protocol_id)
         if p["state"] != S_PROPOSED:
             _fail("there is no proposed verdict to accept")
-        if _now() < p["proposed_at"] + ACCEPT_DELAY:
+        now = _now()
+        if now < p["proposed_at"] + ACCEPT_DELAY:
             _fail(f"a verdict can be accepted {ACCEPT_DELAY} seconds after it is proposed")
+        if p["result"] in (R_INCONCLUSIVE, R_DEVIATION) and not self._is_owner(p, self._sender()) \
+                and now <= p["deadline"]:
+            _fail("an unsettled verdict can be accepted by the creator or the responsible party, "
+                  "or by anyone after the deadline")
         p["state"] = S_ACCEPTED
         self._save(p)
         self._log(p, "verdict accepted")
@@ -794,7 +925,9 @@ class Attestly(gl.contract.Contract):
         return {"version": VERSION, "protocol_count": int(self.protocol_count),
                 "registry_count": len(self.registry_ids), "custody": str(int(self.total_custody)),
                 "accept_delay": ACCEPT_DELAY, "recovery_window": RECOVERY_WINDOW,
-                "max_requirements": MAX_REQUIREMENTS, "max_evidence": MAX_EVIDENCE}
+                "max_requirements": MAX_REQUIREMENTS, "max_evidence": MAX_EVIDENCE,
+                "max_per_delegate": MAX_PER_DELEGATE, "reserved_for_owners": RESERVED_FOR_OWNERS,
+                "max_delegates": MAX_DELEGATES}
 
     @gl.public.view
     def get_protocol(self, protocol_id: str) -> dict:

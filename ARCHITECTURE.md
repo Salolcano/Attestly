@@ -13,3 +13,8 @@
   party's record (counts per result, last 50 entries, verified rate in basis points).
 * **Console**: client-side Next.js. Reads via a throwaway-account client; writes via the wallet's
   provider with the connected address as the account. All fees come from SDK estimates.
+* **Evidence access control**: `submit_evidence`, `replace_evidence`, `withdraw_evidence` and
+  `request_verification` check the caller against creator, responsible party and the protocol's
+  `submitters` list. Quotas (`MAX_PER_DELEGATE`, `RESERVED_FOR_OWNERS`, `MAX_REGISTRATIONS`) are
+  constants in the contract. Rows are never deleted: withdrawn or replaced rows are marked
+  (`removed_by`, `replaced_by`) and drop out of `evidence_ids`, so earlier verification rounds stay readable.

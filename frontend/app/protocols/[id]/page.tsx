@@ -24,6 +24,9 @@ function Actions({ p, reload }: { p: Protocol; reload: () => void }) {
   const me = (address ?? "").toLowerCase();
   const isCreator = me === p.creator;
   const isParty = me === p.responsible;
+  const isOwner = isCreator || isParty;
+  const canSubmit = isOwner || p.submitters.includes(me);
+  const [helper, setHelper] = useState("");
   const [amount, setAmount] = useState("");
   const [url, setUrl] = useState("");
   const [supports, setSupports] = useState<string[]>([]);
@@ -31,7 +34,7 @@ function Actions({ p, reload }: { p: Protocol; reload: () => void }) {
 
   const wait = Math.max(0, p.proposed_at + p.accept_delay - now);
   const canReopen = p.state === "VERDICT_PROPOSED" && ["INCONCLUSIVE", "PROTOCOL_DEVIATION"].includes(p.result);
-  const takesEvidence = (["ACTIVE", "EVIDENCE_SUBMITTED"].includes(p.state) || canReopen) && now <= p.deadline;
+  const takesEvidence = canSubmit && (["ACTIVE", "EVIDENCE_SUBMITTED"].includes(p.state) || canReopen) && now <= p.deadline;
   const recoverable = !["FINALIZED", "CANCELLED", "ACCEPTED"].includes(p.state) && now > p.deadline + p.recovery_window;
 
   const fund = (): Call | null => {
@@ -71,9 +74,27 @@ function Actions({ p, reload }: { p: Protocol; reload: () => void }) {
           <div><TxButton call={evidence} onDone={() => { setUrl(""); reload(); }} variant="ghost">Register evidence</TxButton></div>
         </div>
       )}
-      {(p.state === "EVIDENCE_SUBMITTED" || canReopen) && p.evidence.length > 0 && (
+      {canSubmit && (p.state === "EVIDENCE_SUBMITTED" || canReopen) && p.evidence.length > 0 && (
         <div><TxButton call={calls.verify(p.id)} onDone={reload}>Verify evidence</TxButton>
           <div className="label" style={{ marginTop: 8 }}>Every validator fetches every source. This takes a few minutes.</div></div>
+      )}
+      {!canSubmit && ["ACTIVE", "EVIDENCE_SUBMITTED"].includes(p.state) && (
+        <div style={{ color: "var(--muted)" }}>Only the creator, the responsible party and authorized submitters can register evidence.</div>
+      )}
+      {isOwner && !["ACCEPTED", "FINALIZED", "CANCELLED"].includes(p.state) && (
+        <div style={{ display: "grid", gap: 10 }}>
+          <div className="label">Authorized submitters ({p.submitters.length}/5)</div>
+          {p.submitters.map((a) => (
+            <div key={a} style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <span className="mono" style={{ fontSize: 12 }}>{shortAddress(a)}</span>
+              <TxButton call={calls.revoke(p.id, a)} onDone={reload} variant="ghost">Revoke</TxButton>
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+            <input className="field mono" style={{ flex: "1 1 280px" }} placeholder="0x... a helper who may add up to 4 sources" value={helper} onChange={(e) => setHelper(e.target.value)} />
+            <TxButton call={() => (/^0x[0-9a-fA-F]{40}$/.test(helper.trim()) ? calls.authorize(p.id, helper.trim()) : (setProblem("Enter a valid helper address."), null))} onDone={() => { setHelper(""); reload(); }} variant="ghost">Authorize</TxButton>
+          </div>
+        </div>
       )}
       {p.state === "VERDICT_PROPOSED" && (
         <div><TxButton call={calls.acceptVerdict(p.id)} onDone={reload} disabled={wait > 0}>{wait > 0 ? `Accept verdict in ${wait}s` : "Accept verdict"}</TxButton></div>
@@ -123,6 +144,15 @@ function Rounds({ p }: { p: Protocol }) {
       ))}
     </div>
   );
+}
+
+function WithdrawButton({ p, evidenceId, submitter, reload }: { p: Protocol; evidenceId: string; submitter: string; reload: () => void }) {
+  const { address } = useWallet();
+  const me = (address ?? "").toLowerCase();
+  const editable = ["ACTIVE", "EVIDENCE_SUBMITTED"].includes(p.state) ||
+    (p.state === "VERDICT_PROPOSED" && ["INCONCLUSIVE", "PROTOCOL_DEVIATION"].includes(p.result));
+  if (!editable || !(me === p.creator || me === p.responsible || me === submitter)) return null;
+  return <TxButton call={calls.withdraw(p.id, evidenceId)} onDone={reload} variant="ghost">Withdraw</TxButton>;
 }
 
 export default function ProtocolPage({ params }: { params: Promise<{ id: string }> }) {
@@ -178,10 +208,11 @@ export default function ProtocolPage({ params }: { params: Promise<{ id: string 
             <div className="label" style={{ marginBottom: 6 }}>Evidence ({p.evidence.length})</div>
             {p.evidence.length === 0 && <div style={{ color: "var(--muted)" }}>Nothing registered yet.</div>}
             {p.evidence.map((e) => (
-              <div key={e.evidence_id} className="row" style={{ gridTemplateColumns: "40px 1fr auto" }}>
+              <div key={e.evidence_id} className="row" style={{ gridTemplateColumns: "40px 1fr auto auto" }}>
                 <span className="num">{e.evidence_id}</span>
                 <a href={e.url} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 13, wordBreak: "break-all", textDecoration: "underline" }}>{e.url}</a>
-                <span className="label">{e.publisher} / {e.supports.join(" ")}</span>
+                <span className="label">{e.publisher} / {e.supports.join(" ")} / by {shortAddress(e.submitter)}</span>
+                <WithdrawButton p={p} evidenceId={e.evidence_id} submitter={e.submitter} reload={reload} />
               </div>
             ))}
           </div>

@@ -11,7 +11,7 @@ GOOD = {"R1": ("MET", "Apache License 2.0", "E1"),
 
 
 def evidence_for_all(h, pid, urls=(URL_A,), supports="R1,R2,R3"):
-    h.sender(STRANGER)
+    h.sender(CREATOR)
     h.at(60)
     return [h.contract.submit_evidence(pid, u, supports) for u in urls]
 
@@ -105,7 +105,7 @@ def test_happy_path_pays_and_registers(h):
                                 "R3": ("MET", "Security contact: SECURITY.md", "E1")})
     h.state.pages[URL_B] = (200, "Release v2.0 notes. Licence: Apache License 2.0. Changelog entry added for 2.0.")
     # R3 quote is not on any page, so it is demoted to UNRESOLVED -> partial result
-    h.sender(STRANGER)
+    h.sender(CREATOR)
     h.at(100)
     assert h.contract.request_verification(pid) == "PARTIALLY_VERIFIED"
     h.at(100 + 100)
@@ -209,7 +209,7 @@ def test_inconclusive_can_be_reopened_with_more_evidence(h):
     h.state.llm = scripted_llm({"R1": ("UNRESOLVED", "", ""), "R2": ("UNRESOLVED", "", ""), "R3": ("UNRESOLVED", "", "")})
     h.at(100)
     assert h.contract.request_verification(pid) == "INCONCLUSIVE"
-    h.sender(STRANGER)
+    h.sender(CREATOR)
     h.contract.submit_evidence(pid, URL_B, "R1,R2")
     h.state.llm = scripted_llm({"R1": ("MET", "Licence: Apache License 2.0", "E2"),
                                 "R2": ("MET", "Changelog entry added for 2.0", "E2"),
@@ -269,7 +269,7 @@ def test_funded_protocol_needs_a_payee(h):
 
 def test_evidence_rules(h):
     pid = active_protocol(h)
-    h.sender(STRANGER); h.at(50)
+    h.sender(CREATOR); h.at(50)
     h.expect_fail(h.contract.submit_evidence, pid, "http://insecure.example.com", "R1")
     h.expect_fail(h.contract.submit_evidence, pid, URL_A, "R9")
     h.expect_fail(h.contract.submit_evidence, pid, URL_A, "")
